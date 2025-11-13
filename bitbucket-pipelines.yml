@@ -1,0 +1,85 @@
+# Chọn image của Docker cho môi trường JDK và các công cụ cần thiết
+image: eclipse-temurin:22
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Run JWT Test and Send JWT to Salesforce  # 1. Tên bước trong pipeline
+          caches:
+            - maven
+          script:
+            # 2. Cài đặt các công cụ cần thiết như wget, curl, unzip, zip
+            - apt-get update && apt-get install -y wget unzip zip gnupg2
+
+            # 3. Cài đặt Google Chrome
+            - echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list
+            - wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add -
+            - which google-chrome || apt-get update && apt-get install -y google-chrome-stable
+
+            # 4. Cài đặt Maven
+            - wget https://archive.apache.org/dist/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.zip
+            - unzip apache-maven-3.9.6-bin.zip -d /opt
+            - export PATH=$PATH:/opt/apache-maven-3.9.6/bin
+
+            # 5. Chạy các bài kiểm tra với Maven
+            - mvn clean test -DsuiteXmlFile=testsuite.xml
+
+            # 6. Chạy lớp JWTTest để tạo JWT Token
+            - java -cp target/test-classes base.JWTTest
+
+            # 7. Gửi JWT token đến Salesforce OAuth endpoint để nhận access token
+            - echo "Sending JWT token to Salesforce OAuth endpoint"  # In ra thông báo đang gửi JWT token
+            - |
+              JWT_TOKEN=$(java -cp target/test-classes base.JWTTest)  # Lấy JWT token từ lớp JWTTest
+              SALESFORCE_OAUTH_URL="https://test.salesforce.com/services/oauth2/token"  # URL OAuth Salesforce (dùng test.salesforce.com cho sandbox)
+
+              # 8. Sử dụng cURL để gửi JWT token tới Salesforce và nhận access token
+              response=$(curl -X POST $SALESFORCE_OAUTH_URL \
+                -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+                -d "assertion=$JWT_TOKEN" \
+                -d "client_id=$SALESFORCE_CLIENT_ID" \
+                -d "client_secret=$SALESFORCE_CLIENT_SECRET" \
+                -d "redirect_uri=$SALESFORCE_REDIRECT_URI" \
+                -H "Content-Type: application/x-www-form-urlencoded")
+
+            # 9. Kiểm tra nếu nhận được access_token
+            - echo "Checking if access_token is received from Salesforce"  # Thông báo đang kiểm tra token
+            - |
+              if echo "$response" | grep -q "access_token"; then  # Kiểm tra nếu có "access_token" trong phản hồi từ Salesforce
+                echo "Access token received!"  # In thông báo nếu nhận được access token
+              else
+                echo "Failed to receive access token"  # In thông báo nếu không nhận được access token
+                exit 1  # Dừng pipeline nếu không nhận được access token
+              fi
+
+          after-script:
+            - echo "Test report can be downloaded from the Artifacts section"  # Báo cáo sau khi kiểm tra
+            - pipe: atlassian/checkstyle-report:0.3.0  # Chạy báo cáo Checkstyle
+          services:
+            - chrome  # Sử dụng dịch vụ chrome cho Selenium
+          artifacts:
+            - target/surefire-reports/**  # Lưu báo cáo Surefire
+            - target/allure-results/**    # Lưu kết quả Allure
+
+      - step:
+          name: Generate Allure Report  # Bước tạo báo cáo Allure
+          script:
+            - apt-get update && apt-get install -y wget unzip zip  # Cài đặt lại các công cụ cần thiết
+            - wget -O allure-2.29.0.tgz https://repo.maven.apache.org/maven2/io/qameta/allure/allure-commandline/2.29.0/allure-commandline-2.29.0.tgz  # Tải Allure
+            - mkdir -p /opt/allure  # Tạo thư mục Allure
+            - tar -zxvf allure-2.29.0.tgz -C /opt/allure --strip-components=1  # Giải nén Allure
+            - export PATH=$PATH:/opt/allure/bin  # Thêm Allure vào PATH
+            - allure generate target/allure-results --clean -o target/allure-reports  # Tạo báo cáo Allure từ kết quả kiểm thử
+            - cd target && zip -r allure-reports.zip allure-reports  # Nén báo cáo Allure để tải xuống
+
+          artifacts:
+            - target/allure-reports/**  # Lưu báo cáo Allure
+            - target/allure-reports.zip  # Lưu bản nén báo cáo Allure
+
+definitions:
+  services:
+    chrome:
+      image: selenium/standalone-chrome:latest  # Sử dụng Selenium Chrome cho các bài kiểm thử
+      environment:
+        port: "4444"  # Cổng giao tiếp với Selenium
