@@ -1,0 +1,19 @@
+<!DOCTYPE suite SYSTEM "https://testng.org/testng-1.0.dtd">
+<suite name="Test Suite">
+    <!-- ✅ Thêm phần này ngay bên trong <suite> -->
+    <listeners>
+        <listener class-name="utils.GenerateAllureReportListener"/>
+    </listeners>
+    <parameter name="testSuite" value="1" /> <!-- 1 run Bit headless, 0 run local-->
+    <test name="Salesforce" time-out="300000" >
+        <classes>
+            <!--
+            <class name="tests.SFLead" />
+             <class name="tests.SFContact" />
+             <class name="tests.SFOpp" />
+             <class name="tests.SFProfilePermission" />
+             -->
+             <class name="tests.SFAccount" />
+        </classes>
+    </test>
+</suite>
